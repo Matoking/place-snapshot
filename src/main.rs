@@ -3,52 +3,52 @@ extern crate csv;
 extern crate chrono;
 
 use std::io;
-use std::process;
 use std::fs::File;
 use flate2::read::GzDecoder;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use image::{ImageBuffer, Rgb};
+use smallvec::{SmallVec};
 
-const PLACE_HISTORY_FILE: &'static str = "/mnt/LinuxDataSSD_B/2022_place_canvas_history.csv.gzip";
-
-fn color_to_index(color: &str) -> u8 {
+#[inline(always)]
+fn color_to_index(color: & [u8]) -> u8 {
     match color {
-        "#000000" => 0,
-        "#00CCC0" => 1,
-        "#94B3FF" => 2,
-        "#6A5CFF" => 3,
-        "#009EAA" => 4,
-        "#E4ABFF" => 5,
-        "#00756F" => 6,
-        "#00A368" => 7,
-        "#00CC78" => 8,
-        "#2450A4" => 9,
-        "#3690EA" => 10,
-        "#493AC1" => 11,
-        "#515252" => 12,
-        "#51E9F4" => 13,
-        "#6D001A" => 14,
-        "#6D482F" => 15,
-        "#7EED56" => 16,
-        "#811E9F" => 17,
-        "#898D90" => 18,
-        "#9C6926" => 19,
-        "#B44AC0" => 20,
-        "#BE0039" => 21,
-        "#D4D7D9" => 22,
-        "#DE107F" => 23,
-        "#FF3881" => 24,
-        "#FF4500" => 25,
-        "#FF99AA" => 26,
-        "#FFA800" => 27,
-        "#FFB470" => 28,
-        "#FFD635" => 29,
-        "#FFF8B8" => 30,
-        "#FFFFFF" => 31,
-        _ => panic!("Unrecognized {}", color)
+        b"#000000" => 0,
+        b"#00CCC0" => 1,
+        b"#94B3FF" => 2,
+        b"#6A5CFF" => 3,
+        b"#009EAA" => 4,
+        b"#E4ABFF" => 5,
+        b"#00756F" => 6,
+        b"#00A368" => 7,
+        b"#00CC78" => 8,
+        b"#2450A4" => 9,
+        b"#3690EA" => 10,
+        b"#493AC1" => 11,
+        b"#515252" => 12,
+        b"#51E9F4" => 13,
+        b"#6D001A" => 14,
+        b"#6D482F" => 15,
+        b"#7EED56" => 16,
+        b"#811E9F" => 17,
+        b"#898D90" => 18,
+        b"#9C6926" => 19,
+        b"#B44AC0" => 20,
+        b"#BE0039" => 21,
+        b"#D4D7D9" => 22,
+        b"#DE107F" => 23,
+        b"#FF3881" => 24,
+        b"#FF4500" => 25,
+        b"#FF99AA" => 26,
+        b"#FFA800" => 27,
+        b"#FFB470" => 28,
+        b"#FFD635" => 29,
+        b"#FFF8B8" => 30,
+        b"#FFFFFF" => 31,
+        _ => panic!("Unrecognized")
     }
 }
 
+#[inline(always)]
 fn index_to_pixel(index: u8) -> Rgb<u8> {
     match index {
         0 => Rgb([0, 0, 0]),
@@ -89,10 +89,12 @@ fn index_to_pixel(index: u8) -> Rgb<u8> {
 
 
 fn update_color(
-    x: u16, y: u16, timestamp: i64, color: &str,
-    canvas: &mut Vec<u8>, canvas_timestamps: &mut Vec<i64>
+    x: u16, y: u16, timestamp: i64, color: u8,
+    canvas: &mut Vec<u8>, canvas_timestamps: &mut Vec<i64>,
+    canvas_touched: &mut Vec<bool>
     ) {
     let index: u32 = ((y as u32 * 2000) + x as u32);
+
     let previous_timestamp: i64 = canvas_timestamps[index as usize];
 
     if previous_timestamp > timestamp {
@@ -100,8 +102,8 @@ fn update_color(
     }
 
     canvas_timestamps[index as usize] = timestamp;
-
-    canvas[index as usize] = color_to_index(color);
+    canvas[index as usize] = color;
+    canvas_touched[index as usize] = true;
 }
 
 
@@ -120,6 +122,7 @@ fn main() -> std::io::Result<()> {
     let gz = GzDecoder::new(file);
 
     let mut canvas: Vec<u8> = vec![31; 2000*2000];
+    let mut canvas_touched: Vec<bool> = vec![false; 2000*2000];
     let mut canvas_timestamps: Vec<i64> = vec![0; 2000*2000];
 
     let mut csv_reader = csv::Reader::from_reader(io::BufReader::new(gz));
@@ -145,34 +148,39 @@ fn main() -> std::io::Result<()> {
         );
         let timestamp_unix = timestamp_datetime.timestamp();
 
-        let user_id = record.get(1).unwrap();
-        let color = record.get(2).unwrap();
+        let color: &[u8] = record.get(2).unwrap().as_bytes();
+        let color: u8 = color_to_index(color);
         let coordinates = record.get(3).unwrap().split(",");
         let coordinates = coordinates.collect::<Vec<&str>>();
 
-        if coordinates.len() == 4 {
-            println!("Found moderator placement at {}", timestamp);
-            let x1: u16 = coordinates.get(0).unwrap().parse().unwrap();
-            let y1: u16 = coordinates.get(1).unwrap().parse().unwrap();
-            let x2: u16 = coordinates.get(2).unwrap().parse().unwrap();
-            let y2: u16 = coordinates.get(3).unwrap().parse().unwrap();
+        match coordinates.len() {
+            4 => {
+                println!("Found moderator placement at {}", timestamp);
+                let x1: u16 = coordinates.get(0).unwrap().parse().unwrap();
+                let y1: u16 = coordinates.get(1).unwrap().parse().unwrap();
+                let x2: u16 = coordinates.get(2).unwrap().parse().unwrap();
+                let y2: u16 = coordinates.get(3).unwrap().parse().unwrap();
 
-            for x_ in x1..x2+1 {
-                for y_ in y1..y2+1 {
-                    update_color(
-                        x_, y_, timestamp_unix, color,
-                        &mut canvas, &mut canvas_timestamps
-                    );
+                for x_ in x1..x2+1 {
+                    for y_ in y1..y2+1 {
+                        update_color(
+                            x_, y_, timestamp_unix, color,
+                            &mut canvas, &mut canvas_timestamps,
+                            &mut canvas_touched
+                        );
+                    }
                 }
             }
-        } else {
-            let x: u16 = coordinates.get(0).unwrap().parse().unwrap();
-            let y: u16 = coordinates.get(1).unwrap().parse().unwrap();
+            2 => {
+                let x: u16 = coordinates.get(0).unwrap().parse().unwrap();
+                let y: u16 = coordinates.get(1).unwrap().parse().unwrap();
 
-            update_color(
-                x, y, timestamp_unix, color,
-                &mut canvas, &mut canvas_timestamps
-            );
+                update_color(
+                    x, y, timestamp_unix, color,
+                    &mut canvas, &mut canvas_timestamps, &mut canvas_touched
+                );
+            }
+            _ => panic!("Coordinates weren't in a tuple of 2 or 4!")
         }
 
         processed_pixels += 1;
@@ -183,13 +191,27 @@ fn main() -> std::io::Result<()> {
     }
 
     println!("Total: {}", total_pixels);
+    println!("Untouched pixels:");
+
+    let mut untouched_count: u32 = 0;
+
+    for x in 0..2000 {
+        for y in 0..2000 {
+            let index: u32 = (y * 2000) + x;
+            if canvas_touched[index as usize] == false {
+                untouched_count += 1;
+                println!("Untouched: {},{}", x, y);
+            }
+        }
+    }
+    println!("Untouched pixels in total: {}", untouched_count);
     println!("Rendering image...");
 
     let mut img = ImageBuffer::new(2000, 2000);
 
     for x in 0..2000 {
         for y in 0..2000 {
-            let index: u32 = ((y * 2000) + x);
+            let index: u32 = (y * 2000) + x;
             let color_index = canvas[index as usize];
             let pixel = index_to_pixel(color_index);
             img.put_pixel(x, y, pixel);
