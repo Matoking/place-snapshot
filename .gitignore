@@ -43,3 +43,5 @@ share/python-wheels/
 MANIFEST
 
 # End of https://www.toptal.com/developers/gitignore/api/rust
+venv*/
+place.png

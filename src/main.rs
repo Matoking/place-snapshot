@@ -112,6 +112,8 @@ fn update_color(
 }
 
 fn str_to_timestamp(value: &str) -> i64 {
+    // Every timestamp starts with '2022-04-', meaning we can safely
+    // omit it and only deal with the rest.
     let day: i64 = value[8..10].parse().unwrap();
 
     let hour: i64 = value[11..13].parse().unwrap();
@@ -153,8 +155,8 @@ fn main() -> std::io::Result<()> {
     let mut csv_reader = csv::Reader::from_reader(io::BufReader::new(gz));
 
     let mut total_pixels: u64 = 0;
-    let mut processed_pixels: u64 = 0;
 
+    // CSV file contains ~160 million entries
     let bar = ProgressBar::new(160_353_104);
     bar.set_style(
         ProgressStyle::default_bar()
@@ -217,9 +219,6 @@ fn main() -> std::io::Result<()> {
             }
             _ => panic!("Coordinates weren't in a tuple of 2 or 4!")
         }
-
-        processed_pixels += 1;
-
     }
 
     bar.finish();
