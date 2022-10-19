@@ -78,7 +78,7 @@ INDEX_TO_PIXEL = {
 }
 
 
-def update_color(x, y, timestamp, color, canvas, canvas_timestamps):
+def update_color(x, y, timestamp, color, canvas, canvas_timestamps, canvas_touched):
     index = (y * 2000) + x
     previous_timestamp = canvas_timestamps[index]
 
@@ -87,6 +87,21 @@ def update_color(x, y, timestamp, color, canvas, canvas_timestamps):
 
     canvas_timestamps[index] = timestamp
     canvas[index] = COLOR_TO_INDEX[color]
+    canvas_touched[index] = True
+
+
+def str_to_timestamp(time_str):
+    day = int(time_str[8:10])
+    hour = int(time_str[11:13])
+    minute = int(time_str[14:16])
+    second = int(time_str[17:19])
+
+    timestamp = second
+    timestamp += 60 * minute
+    timestamp += 60 * 60 * hour
+    timestamp += 24 * 60 * 60 * day
+
+    return timestamp
 
 
 def main():
@@ -101,6 +116,7 @@ def main():
 
     canvas = [31 for _ in range(2000*2000)]
     canvas_timestamps = [0 for _ in range(2000*2000)]
+    canvas_touched = [False for _ in range(2000*2000)]
 
     csv_reader = csv.reader(gzip.open(dataset_path, "rt"))
 
@@ -115,15 +131,7 @@ def main():
         if timestamp > cutoff:
             continue
 
-        try:
-            timestamp_unix = datetime.datetime.strptime(
-                timestamp, "%Y-%m-%d %H:%M:%S.%f UTC"
-            ).timestamp()
-        except ValueError:
-            # Fractional part doesn't always exist
-            timestamp_unix = datetime.datetime.strptime(
-                timestamp, "%Y-%m-%d %H:%M:%S UTC"
-            ).timestamp()
+        timestamp_unix = str_to_timestamp(timestamp)
 
         color = record[2]
         coordinates = [int(coord) for coord in record[3].split(",")]
@@ -136,13 +144,13 @@ def main():
                 for y_ in range(y1, y2+1):
                     update_color(
                         x_, y_, timestamp_unix, color,
-                        canvas, canvas_timestamps
+                        canvas, canvas_timestamps, canvas_touched
                     )
         else:
             x, y = coordinates
             update_color(
                 x, y, timestamp_unix, color,
-                canvas, canvas_timestamps
+                canvas, canvas_timestamps, canvas_touched
             )
 
         processed_pixels += 1
@@ -151,6 +159,14 @@ def main():
             print(f"{total_pixels} pixels iterated, {processed_pixels} processed so far...")
 
     print(f"Total {total_pixels}")
+    print("Untouched pixels:")
+
+    for x in range(0, 2000):
+        for y in range(0, 2000):
+            index = (y * 2000) + x
+            if not canvas_touched[index]:
+                print(f"Untouched: {x},{y}")
+
     print("Rendering image...")
 
     img = Image.new("RGB", (2000, 2000))

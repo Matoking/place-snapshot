@@ -1,15 +1,21 @@
-extern crate flate2;
-extern crate csv;
-extern crate chrono;
-
 use std::io;
 use std::fs::File;
 use flate2::read::GzDecoder;
-use chrono::{DateTime, NaiveDateTime, Utc};
+use clap::Parser;
 use image::{ImageBuffer, Rgb};
-use smallvec::{SmallVec};
+use indicatif::{ProgressBar, ProgressStyle};
 
-#[inline(always)]
+type Canvas = Vec<u8>;
+
+#[derive(Parser, Debug)]
+#[clap(version)]
+struct CliArgs {
+    #[clap(short, long, help = "Path to the gzip compressed CSV file")]
+    path: String,
+
+    date: String
+}
+
 fn color_to_index(color: & [u8]) -> u8 {
     match color {
         b"#000000" => 0,
@@ -44,11 +50,10 @@ fn color_to_index(color: & [u8]) -> u8 {
         b"#FFD635" => 29,
         b"#FFF8B8" => 30,
         b"#FFFFFF" => 31,
-        _ => panic!("Unrecognized")
+        _ => panic!("Unrecognized {}", String::from_utf8(color.to_vec()).unwrap())
     }
 }
 
-#[inline(always)]
 fn index_to_pixel(index: u8) -> Rgb<u8> {
     match index {
         0 => Rgb([0, 0, 0]),
@@ -90,7 +95,7 @@ fn index_to_pixel(index: u8) -> Rgb<u8> {
 
 fn update_color(
     x: u16, y: u16, timestamp: i64, color: u8,
-    canvas: &mut Vec<u8>, canvas_timestamps: &mut Vec<i64>,
+    canvas: &mut Canvas, canvas_timestamps: &mut Vec<i64>,
     canvas_touched: &mut Vec<bool>
     ) {
     let index: u32 = ((y as u32 * 2000) + x as u32);
@@ -106,8 +111,24 @@ fn update_color(
     canvas_touched[index as usize] = true;
 }
 
+fn str_to_timestamp(value: &str) -> i64 {
+    let day: i64 = value[8..10].parse().unwrap();
+
+    let hour: i64 = value[11..13].parse().unwrap();
+    let minute: i64 = value[14..16].parse().unwrap();
+    let second: i64 = value[17..19].parse().unwrap();
+
+    let mut timestamp: i64 = second;
+    timestamp += 60 * minute;
+    timestamp += (60 * 60) * hour;
+    timestamp += (24 * 60 * 60) * day;
+
+    return timestamp;
+}
+
 
 fn main() -> std::io::Result<()> {
+    let args = CliArgs::parse();
     if std::env::args().len() < 3 {
         println!("Usage: <place_dataset.gzip> <timestamp>");
         println!("Example:");
@@ -115,23 +136,39 @@ fn main() -> std::io::Result<()> {
         std::process::exit(0);
     }
 
-    let dataset_path: String = std::env::args().nth(1).unwrap();
-    let cutoff: String = std::env::args().nth(2).unwrap();
+    //let dataset_path: String = std::env::args().nth(1).unwrap();
+    let dataset_path: String = args.path.to_string();
+    let cutoff: String = args.date.to_string();
 
     let file = File::open(dataset_path)?;
     let gz = GzDecoder::new(file);
 
-    let mut canvas: Vec<u8> = vec![31; 2000*2000];
+    let mut canvas: Canvas = vec![31; 2000*2000];
     let mut canvas_touched: Vec<bool> = vec![false; 2000*2000];
     let mut canvas_timestamps: Vec<i64> = vec![0; 2000*2000];
+    canvas.shrink_to_fit();
+    canvas_touched.shrink_to_fit();
+    canvas_timestamps.shrink_to_fit();
 
     let mut csv_reader = csv::Reader::from_reader(io::BufReader::new(gz));
 
     let mut total_pixels: u64 = 0;
     let mut processed_pixels: u64 = 0;
 
+    let bar = ProgressBar::new(160_353_104);
+    bar.set_style(
+        ProgressStyle::default_bar()
+        .template("[{elapsed_precise}] [ETA {eta_precise}] {bar:40.cyan/blue} {percent}% {pos:>7}/{len:7} {msg} {per_sec}")
+        .progress_chars("##-")
+    );
+
     for result in csv_reader.records() {
         total_pixels += 1;
+
+        if total_pixels % 1000 == 0 {
+            bar.set_position(total_pixels)
+        }
+
         let record = result?;
 
         let timestamp: String = record.get(0).unwrap().parse().unwrap();
@@ -140,13 +177,11 @@ fn main() -> std::io::Result<()> {
             continue;
         }
 
-        let timestamp_datetime = NaiveDateTime::parse_from_str(
-            &timestamp, "%Y-%m-%d %H:%M:%S%.f UTC"
-        ).unwrap();
-        let timestamp_datetime: DateTime<Utc> = DateTime::from_utc(
-            timestamp_datetime, Utc
-        );
-        let timestamp_unix = timestamp_datetime.timestamp();
+        //let timestamp_datetime = NaiveDateTime::parse_from_str(
+        //    &timestamp[0..18], "%Y-%m-%d %H:%M:%S"
+        //).unwrap();
+        let timestamp_unix = str_to_timestamp(&timestamp);
+        //let timestamp_unix = timestamp_datetime.timestamp();
 
         let color: &[u8] = record.get(2).unwrap().as_bytes();
         let color: u8 = color_to_index(color);
@@ -185,10 +220,9 @@ fn main() -> std::io::Result<()> {
 
         processed_pixels += 1;
 
-        if total_pixels % 1000000 == 0 {
-            println!("{} pixels iterated, {} processed so far...", total_pixels, processed_pixels);
-        }
     }
+
+    bar.finish();
 
     println!("Total: {}", total_pixels);
     println!("Untouched pixels:");
